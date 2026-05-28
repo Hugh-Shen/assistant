@@ -1,0 +1,21 @@
+{
+  "name": "@assistant/utils",
+  "version": "0.0.0",
+  "private": true,
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm,cjs",
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.32.1",
+  "devDependencies": {
+    "eslint": "^10.4.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
+  }
+}
