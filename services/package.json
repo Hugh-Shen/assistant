@@ -1,0 +1,51 @@
+{
+  "name": "services",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NestJS services workspace",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "sh -c 'pnpm --dir ../packages/shared build && pnpm prisma:generate && { pnpm --dir ../packages/shared watch & shared_pid=$!; trap \"kill $shared_pid\" EXIT INT TERM; nest start --watch; }'",
+    "worker:dev": "sh -c 'pnpm --dir ../packages/shared build && pnpm prisma:generate && { pnpm --dir ../packages/shared watch & shared_pid=$!; trap \"kill $shared_pid\" EXIT INT TERM; nest start --watch --entryFile worker/main; }'",
+    "start:dev": "pnpm dev",
+    "start:worker": "node dist/src/worker/main.js",
+    "redis:dev": "node scripts/start-dev-redis.js",
+    "build": "pnpm --dir ../packages/shared build && pnpm prisma:generate && nest build",
+    "start:prod": "node dist/main.js",
+    "typecheck": "pnpm --dir ../packages/shared build && pnpm prisma:generate && tsc -p tsconfig.json --noEmit",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@assistant/shared": "workspace:*",
+    "@assistant/utils": "workspace:*",
+    "@langchain/core": "^1.1.48",
+    "@langchain/openai": "^1.4.7",
+    "@langchain/textsplitters": "^1.0.1",
+    "@nestjs/common": "^11.1.24",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.1.24",
+    "@nestjs/platform-express": "^11.1.24",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "bullmq": "^5.77.6",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "ioredis": "^5.11.0",
+    "openai": "^6.41.0",
+    "pg": "^8.16.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.21",
+    "@nestjs/schematics": "^11.1.0",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.9.1",
+    "@types/pg": "^8.15.6",
+    "prisma": "^7.8.0",
+    "redis-memory-server": "^0.16.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}

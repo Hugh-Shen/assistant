@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import { computed, ref } from "vue"
 import { ArrowUp, Bot, FileText, Globe, Image, Lightbulb, Upload } from "@lucide/vue"
 import { Button } from "@/components/ui/button"
 
 export interface ChatMessage {
   role: "assistant" | "user"
   content: string
+  citations?: Array<{
+    documentId: string
+    chunkId: string
+    score: number
+    text: string
+  }>
 }
 
 export interface ChatStat {
@@ -12,10 +19,30 @@ export interface ChatStat {
   value: string
 }
 
-defineProps<{
+const props = defineProps<{
   messages: ChatMessage[]
   stats: ChatStat[]
+  conversationTitle?: string
+  isAsking?: boolean
 }>()
+
+const emit = defineEmits<{
+  send: [question: string]
+}>()
+
+const prompt = ref("")
+const canSend = computed(() => prompt.value.trim().length > 0 && !props.isAsking)
+
+async function onSend() {
+  const value = prompt.value.trim()
+
+  if (!value || props.isAsking) {
+    return
+  }
+
+  emit("send", value)
+  prompt.value = ""
+}
 </script>
 
 <template>
@@ -23,7 +50,7 @@ defineProps<{
     <div class="flex items-center justify-between border-b border-slate-200/80 px-5 py-4 dark:border-white/10">
       <div>
         <p class="text-sm font-semibold">GPT-like Home</p>
-        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">对话式首页骨架，方便继续接入真实数据</p>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ props.conversationTitle || "对话式知识问答" }}</p>
       </div>
 
       <div class="flex items-center gap-2">
@@ -52,7 +79,7 @@ defineProps<{
 
       <div class="mt-6 flex-1 space-y-4">
         <article
-          v-for="message in messages"
+          v-for="message in props.messages"
           :key="`${message.role}-${message.content.slice(0, 24)}`"
           class="flex gap-3"
           :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
@@ -71,6 +98,22 @@ defineProps<{
               : 'border border-slate-200/80 bg-white text-slate-700 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-200'"
           >
             {{ message.content }}
+
+            <div
+              v-if="message.citations?.length"
+              class="mt-3 space-y-2 border-t border-slate-200/80 pt-3 text-xs dark:border-white/10"
+            >
+              <div
+                v-for="citation in message.citations"
+                :key="citation.chunkId"
+                class="rounded-xl bg-slate-50 px-3 py-2 text-slate-600 dark:bg-slate-950/60 dark:text-slate-300"
+              >
+                <p class="font-medium">
+                  {{ citation.documentId }} / {{ citation.chunkId }} / score {{ citation.score.toFixed(3) }}
+                </p>
+                <p class="mt-1 line-clamp-3">{{ citation.text }}</p>
+              </div>
+            </div>
           </div>
 
           <div
@@ -102,9 +145,11 @@ defineProps<{
           <label class="sr-only" for="prompt">输入消息</label>
           <textarea
             id="prompt"
+            v-model="prompt"
             rows="4"
-            placeholder="给我一个页面需求，或者直接描述你想要的 GPT 风格首页。"
+            placeholder="输入你的问题，我会基于已解析文档做召回回答。"
             class="min-h-[120px] w-full resize-none rounded-2xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:bg-white dark:border-white/10 dark:bg-slate-950/60 dark:focus:border-slate-500 dark:focus:bg-slate-950"
+            @keydown.enter.exact.prevent="onSend"
           />
         </div>
 
@@ -112,8 +157,8 @@ defineProps<{
           <p class="text-xs text-slate-500 dark:text-slate-400">
             Enter 发送，Shift + Enter 换行
           </p>
-          <Button class="rounded-xl">
-            发送消息
+          <Button class="rounded-xl" :disabled="!canSend" @click="onSend">
+            {{ props.isAsking ? "回答中..." : "发送消息" }}
             <ArrowUp class="size-4" />
           </Button>
         </div>

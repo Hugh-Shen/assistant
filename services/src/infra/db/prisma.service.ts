@@ -1,0 +1,139 @@
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from "@nestjs/common"
+import { ConfigType } from "@nestjs/config"
+import { PrismaPg } from "@prisma/adapter-pg"
+import { PrismaClient } from "@prisma/client"
+import { databaseConfig } from "../../config"
+
+@Injectable()
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
+  private readonly logger = new Logger(PrismaService.name)
+
+  constructor(
+    @Inject(databaseConfig.KEY)
+    private readonly config: ConfigType<typeof databaseConfig>,
+  ) {
+    const connectionString =
+      config.url || "postgresql://postgres:postgres@localhost:5432/postgres"
+
+    super({
+      adapter: new PrismaPg({ connectionString }),
+    })
+  }
+
+  async onModuleInit() {
+    if (!this.config.url) {
+      throw new Error("DATABASE_URL is required for Prisma persistence")
+    }
+
+    await this.$connect()
+    await this.ensureSchema()
+    this.logger.log("Prisma connection initialized")
+  }
+
+  async onModuleDestroy() {
+    await this.$disconnect()
+  }
+
+  private async ensureSchema() {
+    const dimension = Math.max(
+      1,
+      Math.floor(this.config.documentEmbeddingDimension || 12),
+    )
+
+    await this.$executeRawUnsafe(`CREATE EXTENSION IF NOT EXISTS vector`)
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS documents (
+        id text PRIMARY KEY,
+        title text NOT NULL,
+        original_name text NOT NULL,
+        mime_type text NOT NULL,
+        size bigint NOT NULL,
+        storage_path text NOT NULL,
+        status text NOT NULL,
+        progress integer NOT NULL,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL,
+        error_message text
+      )
+    `)
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS document_chunks (
+        id text PRIMARY KEY,
+        document_id text NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        chunk_index integer NOT NULL,
+        text text NOT NULL,
+        character_count integer NOT NULL,
+        token_count integer NOT NULL,
+        start_offset integer NOT NULL,
+        end_offset integer NOT NULL
+      )
+    `)
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS document_events (
+        id serial PRIMARY KEY,
+        document_id text NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        stage text NOT NULL,
+        progress integer NOT NULL,
+        message text NOT NULL,
+        detail text,
+        timestamp timestamptz NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `)
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS document_embeddings (
+        id text PRIMARY KEY,
+        document_id text NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        chunk_id text NOT NULL REFERENCES document_chunks(id) ON DELETE CASCADE,
+        model text NOT NULL,
+        dimension integer NOT NULL,
+        embedding vector(${dimension}) NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `)
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS chat_conversations (
+        id text PRIMARY KEY,
+        title text NOT NULL,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL
+      )
+    `)
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id text PRIMARY KEY,
+        conversation_id text NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+        role text NOT NULL,
+        content text NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `)
+    await this.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS document_chunks_document_id_idx ON document_chunks(document_id)`,
+    )
+    await this.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS document_chunks_document_id_chunk_index_idx ON document_chunks(document_id, chunk_index)`,
+    )
+    await this.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS document_events_document_id_id_idx ON document_events(document_id, id)`,
+    )
+    await this.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS document_embeddings_document_id_idx ON document_embeddings(document_id)`,
+    )
+    await this.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS document_embeddings_chunk_id_idx ON document_embeddings(chunk_id)`,
+    )
+    await this.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS chat_messages_conversation_id_created_at_idx ON chat_messages(conversation_id, created_at)`,
+    )
+  }
+}

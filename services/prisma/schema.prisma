@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Document {
+  id           String         @id
+  title        String
+  originalName String         @map("original_name")
+  mimeType     String         @map("mime_type")
+  size         BigInt
+  storagePath  String         @map("storage_path")
+  status       String
+  progress     Int
+  createdAt    DateTime       @map("created_at")
+  updatedAt    DateTime       @map("updated_at")
+  errorMessage String?        @map("error_message")
+  chunks       DocumentChunk[]
+  embeddings   DocumentEmbedding[]
+  events       DocumentEvent[]
+
+  @@map("documents")
+}
+
+model ChatConversation {
+  id        String        @id
+  title     String
+  createdAt DateTime      @map("created_at")
+  updatedAt DateTime      @map("updated_at")
+  messages  ChatMessage[]
+
+  @@map("chat_conversations")
+}
+
+model ChatMessage {
+  id             String           @id
+  conversationId String           @map("conversation_id")
+  role           String
+  content        String
+  createdAt      DateTime         @map("created_at")
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("chat_messages")
+}
+
+model DocumentChunk {
+  id             String   @id
+  documentId     String   @map("document_id")
+  chunkIndex     Int      @map("chunk_index")
+  text           String
+  characterCount Int      @map("character_count")
+  tokenCount     Int      @map("token_count")
+  startOffset    Int      @map("start_offset")
+  endOffset      Int      @map("end_offset")
+  document       Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  embeddings     DocumentEmbedding[]
+
+  @@index([documentId, chunkIndex])
+  @@map("document_chunks")
+}
+
+model DocumentEvent {
+  id         Int      @id @default(autoincrement())
+  documentId String   @map("document_id")
+  stage      String
+  progress   Int
+  message    String
+  detail     String?
+  timestamp  DateTime
+  createdAt  DateTime @default(now()) @map("created_at")
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, id])
+  @@map("document_events")
+}
+
+model DocumentEmbedding {
+  id         String                @id
+  documentId String                @map("document_id")
+  chunkId    String                @map("chunk_id")
+  model      String
+  dimension  Int
+  embedding  Unsupported("vector")
+  createdAt  DateTime              @map("created_at")
+  document   Document              @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunk      DocumentChunk         @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([chunkId])
+  @@map("document_embeddings")
+}

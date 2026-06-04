@@ -7,6 +7,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "turbo run dev",
+    "dev:backend": "sh -c 'pnpm --dir services redis:dev & redis_pid=$!; pnpm --dir services dev & api_pid=$!; pnpm --dir services worker:dev & worker_pid=$!; trap \"kill $redis_pid $api_pid $worker_pid\" EXIT INT TERM; wait'",
+    "dev:web": "pnpm --dir apps/web dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",

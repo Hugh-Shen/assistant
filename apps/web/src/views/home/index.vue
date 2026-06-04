@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import type { ChatConversation, ChatMessageRecord } from "@assistant/shared"
+import { onMounted, ref } from "vue"
+import {
+  askRagQuestion,
+  createConversation,
+  getConversationMessages,
+  listConversations,
+} from "@/api/chat"
 import {
   type ChatMessage,
   type ChatStat,
@@ -9,20 +17,10 @@ import {
   HomeTopbar,
 } from "./components"
 
-const conversations: ConversationItem[] = [
-  {
-    title: "构建产品页文案",
-    preview: "根据目标用户整理首页卖点和 CTA。",
-  },
-  {
-    title: "设计系统整理",
-    preview: "统一 Tailwind tokens 和 shadcn 组件命名。",
-  },
-  {
-    title: "接口联调清单",
-    preview: "补齐表单、鉴权、列表和空态流程。",
-  },
-]
+const conversations = ref<ConversationItem[]>([])
+const activeConversationId = ref<string>()
+const activeConversationTitle = ref("")
+const isAsking = ref(false)
 
 const quickPrompts = [
   "帮我把这个页面改成更像 GPT 的布局",
@@ -31,29 +29,112 @@ const quickPrompts = [
   "补充暗色模式视觉层次",
 ]
 
-const messages: ChatMessage[] = [
+const messages = ref<ChatMessage[]>([
   {
     role: "assistant",
     content:
-      "我可以帮你搭建一个更接近 GPT 的工作台：左侧会话、中间聊天区、右侧上下文面板，以及底部输入框。",
+      "我已经接入了后端 RAG 问答链路。你现在可以直接提问，我会先召回文档，再结合上下文回答。",
   },
-  {
-    role: "user",
-    content:
-      "请优先使用 shadcn 组件，整体风格要简洁、偏产品化，不要太花哨。",
-  },
-  {
-    role: "assistant",
-    content:
-      "收到。下面这个页面已经按这个方向做了一个可直接继续迭代的首页骨架。",
-  },
-]
+])
 
 const stats: ChatStat[] = [
   { label: "上下文窗口", value: "32k" },
-  { label: "响应模式", value: "流式" },
-  { label: "当前模型", value: "GPT-like" },
+  { label: "响应模式", value: "RAG" },
+  { label: "当前模型", value: "OpenAI" },
 ]
+
+function toUiMessages(records: ChatMessageRecord[]): ChatMessage[] {
+  return records.map(record => ({
+    role: record.role,
+    content: record.content,
+  }))
+}
+
+async function loadConversations() {
+  const data = await listConversations()
+  conversations.value = data.conversations.map(conversation => ({
+    id: conversation.id,
+    title: conversation.title,
+    preview: "点击查看历史消息",
+  } satisfies ConversationItem))
+
+  if (!activeConversationId.value && data.conversations[0]) {
+    await selectConversation(data.conversations[0].id)
+  }
+}
+
+async function createNewConversation() {
+  const data = await createConversation("新会话")
+  activeConversationId.value = data.conversation.id
+  activeConversationTitle.value = data.conversation.title
+  messages.value = [
+    {
+      role: "assistant",
+      content: "新会话已创建，你可以开始提问了。",
+    },
+  ]
+  await loadConversations()
+}
+
+async function selectConversation(conversationId: string) {
+  const data = await getConversationMessages(conversationId)
+  activeConversationId.value = data.conversation.id
+  activeConversationTitle.value = data.conversation.title
+  messages.value = data.messages.length
+    ? toUiMessages(data.messages)
+    : [
+        {
+          role: "assistant",
+          content: "这个会话还没有消息，直接开始提问即可。",
+        },
+      ]
+}
+
+async function askQuestion(question: string) {
+  if (isAsking.value) {
+    return
+  }
+
+  isAsking.value = true
+
+  if (!activeConversationId.value) {
+    await createNewConversation()
+  }
+
+  messages.value.push({
+    role: "user",
+    content: question,
+  })
+
+  try {
+    const payload = await askRagQuestion({
+      question,
+      conversationId: activeConversationId.value,
+    })
+
+    messages.value.push({
+      role: "assistant",
+      content: payload.answer,
+      citations: payload.citations,
+    })
+
+    await loadConversations()
+  } catch (error) {
+    messages.value.push({
+      role: "assistant",
+      content:
+        error instanceof Error
+          ? `请求失败：${error.message}`
+          : "请求失败，请稍后再试。",
+    })
+  } finally {
+    isAsking.value = false
+  }
+}
+
+onMounted(async () => {
+  await loadConversations()
+})
 </script>
 
 <template>
@@ -65,11 +146,18 @@ const stats: ChatStat[] = [
         <HomeSidebar
           :conversations="conversations"
           :quick-prompts="quickPrompts"
+          :active-conversation-id="activeConversationId"
+          @select="selectConversation"
+          @create="createNewConversation"
+          @prompt="askQuestion"
         />
 
         <HomeChatArea
           :messages="messages"
           :stats="stats"
+          :conversation-title="activeConversationTitle"
+          :is-asking="isAsking"
+          @send="askQuestion"
         />
 
         <HomeContextPanel />
