@@ -5,17 +5,17 @@ import type {
   DocumentProcessingEvent,
   DocumentProcessingManifest,
 } from "@assistant/shared"
-import { DocumentEventsService } from "./document-events.service"
+import { DocumentEventsService } from "../document-events.service"
 import { DocumentParseService } from "./document-parse.service"
 import { DocumentVectorizeService } from "./document-vectorize.service"
 import {
   DOCUMENT_REPOSITORY,
   type DocumentRepository,
-} from "../ports/document.repository.port"
+} from "../../ports/document.repository.port"
 import {
   DOCUMENT_ARTIFACT_REPOSITORY,
   type DocumentArtifactRepository,
-} from "../ports/document-artifact.repository.port"
+} from "../../ports/document-artifact.repository.port"
 
 @Injectable()
 export class DocumentProcessingService {
@@ -36,7 +36,6 @@ export class DocumentProcessingService {
         progress: 15,
       })
 
-      // 第 1 阶段：解析前先记录状态，让 SSE 能立即反馈进度。
       await this.emit(
         documentId,
         "parsing",
@@ -48,7 +47,6 @@ export class DocumentProcessingService {
       const parsed = await this.parser.parse(current)
       await this.artifacts.saveChunks(documentId, parsed.chunks)
 
-      // 第 2 阶段：完成文本分块后，再把分块结果写入数据库。
       await this.emit(
         documentId,
         "parsing",
@@ -90,7 +88,6 @@ export class DocumentProcessingService {
         updatedAt: new Date().toISOString(),
       }
 
-      // 第 3 阶段：向量化完成后更新最终状态，供查询接口直接读取。
       await this.emit(
         documentId,
         "vectorizing",

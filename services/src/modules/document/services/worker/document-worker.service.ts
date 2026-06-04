@@ -8,7 +8,7 @@ import {
 import { ConfigType } from "@nestjs/config"
 import { Worker } from "bullmq"
 import { DOCUMENT_QUEUE_NAME } from "@assistant/shared"
-import { documentConfig } from "../../../config"
+import { documentConfig } from "../../../../config"
 import { DocumentProcessingService } from "./document-processing.service"
 
 interface DocumentJobPayload {

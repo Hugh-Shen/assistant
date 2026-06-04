@@ -6,7 +6,7 @@ import type {
 import {
   EMBEDDING_SERVICE,
   type EmbeddingService,
-} from "../../../langchain/embeddings/ports/embedding.port"
+} from "../../../../langchain/embeddings/ports/embedding.port"
 
 @Injectable()
 export class DocumentVectorizeService {

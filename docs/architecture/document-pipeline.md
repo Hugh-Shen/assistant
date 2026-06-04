@@ -45,14 +45,15 @@ services/src/modules/document/
 │   ├── prisma-document-event.repository.ts
 │   └── in-memory-document-event.repository.ts
 ├── services/
-│   ├── document-upload.service.ts
-│   ├── document-processing.service.ts
-│   ├── document-parse.service.ts
-│   ├── document-vectorize.service.ts
 │   ├── document-artifact-query.service.ts
+│   ├── document-upload.service.ts
 │   ├── document-queue.service.ts
-│   ├── document-worker.service.ts
 │   └── document-events.service.ts
+│   └── worker/
+│       ├── document-processing.service.ts
+│       ├── document-parse.service.ts
+│       ├── document-vectorize.service.ts
+│       └── document-worker.service.ts
 └── ...
 
 services/src/langchain/
