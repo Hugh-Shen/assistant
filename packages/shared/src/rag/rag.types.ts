@@ -1,3 +1,11 @@
+export type RagSourceType = "knowledge_base" | "web"
+
+export type RagRetrievalMode =
+  | "knowledge_base"
+  | "search"
+  | "hybrid"
+  | "none"
+
 export interface RagAskRequest {
   question: string
   topK?: number
@@ -5,8 +13,12 @@ export interface RagAskRequest {
 }
 
 export interface RagCitation {
-  documentId: string
-  chunkId: string
+  sourceType: RagSourceType
+  source?: string
+  title?: string
+  url?: string
+  documentId?: string
+  chunkId?: string
   score: number
   text: string
 }
@@ -14,5 +26,23 @@ export interface RagCitation {
 export interface RagAskResponse {
   question: string
   answer: string
+  retrievalMode: RagRetrievalMode
+  citations: RagCitation[]
+}
+
+export interface RagAnswerStartedEvent {
+  question: string
+  retrievalMode: RagRetrievalMode
+  citations: RagCitation[]
+}
+
+export interface RagAnswerChunkEvent {
+  delta: string
+}
+
+export interface RagAnswerCompletedEvent {
+  question: string
+  answer: string
+  retrievalMode: RagRetrievalMode
   citations: RagCitation[]
 }

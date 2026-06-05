@@ -6,14 +6,20 @@ import { LangchainModule } from "./langchain/langchain.module"
 import { ChatModule } from "./modules/chat/chat.module"
 import { DocumentModule } from "./modules/document/document.module"
 import { RagModule } from "./modules/rag/rag.module"
-import { appConfig, databaseConfig, documentConfig, llmConfig } from "./config"
+import {
+  appConfig,
+  databaseConfig,
+  documentConfig,
+  llmConfig,
+  ragConfig,
+} from "./config"
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [".env.local", ".env"],
-      load: [appConfig, databaseConfig, documentConfig, llmConfig],
+      load: [appConfig, databaseConfig, documentConfig, llmConfig, ragConfig],
     }),
     LangchainModule,
     ChatModule,

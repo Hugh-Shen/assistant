@@ -1,14 +1,26 @@
 <script setup lang="ts">
-import type { ChatConversation, ChatMessageRecord } from "@assistant/shared"
-import { onMounted, ref } from "vue"
+import type {
+  ChatConversation,
+  ChatMessageRecord,
+  RagAnswerChunkEvent,
+  RagAnswerCompletedEvent,
+  RagAnswerStartedEvent,
+  RagRetrievalMode,
+} from "@assistant/shared"
+import { computed, onMounted, ref } from "vue"
 import {
   askRagQuestion,
+  deleteConversation,
   createConversation,
   getConversationMessages,
   listConversations,
+  updateConversationTitle,
 } from "@/api/chat"
+import { http } from "@/lib/http"
+import { postSse } from "@/lib/sse"
 import {
   type ChatMessage,
+  type ResponseModeOption,
   type ChatStat,
   type ConversationItem,
   HomeChatArea,
@@ -21,6 +33,9 @@ const conversations = ref<ConversationItem[]>([])
 const activeConversationId = ref<string>()
 const activeConversationTitle = ref("")
 const isAsking = ref(false)
+const activeRetrievalMode = ref<RagRetrievalMode>("knowledge_base")
+const askAbortController = ref<AbortController | null>(null)
+const responseMode = ref<ResponseModeOption>("stream")
 
 const quickPrompts = [
   "帮我把这个页面改成更像 GPT 的布局",
@@ -43,6 +58,19 @@ const stats: ChatStat[] = [
   { label: "当前模型", value: "OpenAI" },
 ]
 
+const retrievalModeLabel = computed(() => {
+  switch (activeRetrievalMode.value) {
+    case "knowledge_base":
+      return "RAG"
+    case "search":
+      return "Search"
+    case "hybrid":
+      return "Hybrid"
+    default:
+      return "Unknown"
+  }
+})
+
 function toUiMessages(records: ChatMessageRecord[]): ChatMessage[] {
   return records.map(record => ({
     role: record.role,
@@ -50,12 +78,17 @@ function toUiMessages(records: ChatMessageRecord[]): ChatMessage[] {
   }))
 }
 
+function buildConversationPreview(records: ChatMessageRecord[]) {
+  const lastMessage = [...records].reverse().find(record => record.role === "user")
+  return lastMessage?.content || "点击查看历史消息"
+}
+
 async function loadConversations() {
   const data = await listConversations()
   conversations.value = data.conversations.map(conversation => ({
     id: conversation.id,
     title: conversation.title,
-    preview: "点击查看历史消息",
+    preview: conversation.title === "新会话" ? "等待第一条问题" : conversation.title,
   } satisfies ConversationItem))
 
   if (!activeConversationId.value && data.conversations[0]) {
@@ -80,6 +113,7 @@ async function selectConversation(conversationId: string) {
   const data = await getConversationMessages(conversationId)
   activeConversationId.value = data.conversation.id
   activeConversationTitle.value = data.conversation.title
+  activeRetrievalMode.value = "knowledge_base"
   messages.value = data.messages.length
     ? toUiMessages(data.messages)
     : [
@@ -88,6 +122,17 @@ async function selectConversation(conversationId: string) {
           content: "这个会话还没有消息，直接开始提问即可。",
         },
       ]
+
+  const preview = buildConversationPreview(data.messages)
+  conversations.value = conversations.value.map(conversation =>
+    conversation.id === conversationId
+      ? {
+          ...conversation,
+          title: data.conversation.title,
+          preview,
+        }
+      : conversation,
+  )
 }
 
 async function askQuestion(question: string) {
@@ -107,19 +152,98 @@ async function askQuestion(question: string) {
   })
 
   try {
-    const payload = await askRagQuestion({
-      question,
-      conversationId: activeConversationId.value,
-    })
+    askAbortController.value = new AbortController()
 
-    messages.value.push({
+    if (activeConversationId.value) {
+      const updated = await updateConversationTitle(activeConversationId.value, question)
+
+      if (updated?.conversation) {
+        activeConversationTitle.value = updated.conversation.title
+      }
+    }
+
+    const assistantMessage: ChatMessage = {
       role: "assistant",
-      content: payload.answer,
-      citations: payload.citations,
-    })
+      content: "",
+      pending: true,
+      citations: [],
+    }
+    messages.value.push(assistantMessage)
+
+    if (responseMode.value === "stream") {
+      await postSse(
+        "/api/rag/ask",
+        {
+          question,
+          conversationId: activeConversationId.value,
+        },
+        {
+          signal: askAbortController.value.signal,
+          onEvent(message) {
+            if (message.event === "started") {
+              const payload = message.data as RagAnswerStartedEvent
+              activeRetrievalMode.value = payload.retrievalMode
+              assistantMessage.citations = payload.citations
+              return
+            }
+
+            if (message.event === "delta") {
+              const payload = message.data as RagAnswerChunkEvent
+              assistantMessage.content += payload.delta
+              return
+            }
+
+            if (message.event === "completed") {
+              const payload = message.data as RagAnswerCompletedEvent
+              activeRetrievalMode.value = payload.retrievalMode
+              assistantMessage.content = payload.answer
+              assistantMessage.citations = payload.citations
+              assistantMessage.pending = false
+            }
+          },
+        },
+      )
+    } else {
+      const payload = await askRagQuestion(
+        {
+          question,
+          conversationId: activeConversationId.value,
+        },
+        {
+          signal: askAbortController.value.signal,
+        },
+      )
+
+      activeRetrievalMode.value = payload.retrievalMode
+      assistantMessage.content = payload.answer
+      assistantMessage.citations = payload.citations
+      assistantMessage.pending = false
+    }
 
     await loadConversations()
+    if (activeConversationId.value) {
+      await selectConversation(activeConversationId.value)
+    }
   } catch (error) {
+    if (http.isCancel(error)) {
+      const lastMessage = messages.value[messages.value.length - 1]
+
+      if (lastMessage?.role === "assistant" && lastMessage.pending) {
+        messages.value.pop()
+      }
+
+      messages.value.push({
+        role: "assistant",
+        content: "已中断本次生成。",
+      })
+      return
+    }
+
+    const lastMessage = messages.value[messages.value.length - 1]
+    if (lastMessage?.role === "assistant" && lastMessage.pending) {
+      messages.value.pop()
+    }
+
     messages.value.push({
       role: "assistant",
       content:
@@ -128,8 +252,39 @@ async function askQuestion(question: string) {
           : "请求失败，请稍后再试。",
     })
   } finally {
+    askAbortController.value = null
     isAsking.value = false
   }
+}
+
+function stopAnswer() {
+  askAbortController.value?.abort()
+}
+
+function changeResponseMode(mode: ResponseModeOption) {
+  if (isAsking.value) {
+    return
+  }
+
+  responseMode.value = mode
+}
+
+async function removeConversation(conversationId: string) {
+  await deleteConversation(conversationId)
+
+  if (activeConversationId.value === conversationId) {
+    activeConversationId.value = undefined
+    activeConversationTitle.value = ""
+    activeRetrievalMode.value = "knowledge_base"
+    messages.value = [
+      {
+        role: "assistant",
+        content: "会话已删除，请新建会话继续提问。",
+      },
+    ]
+  }
+
+  await loadConversations()
 }
 
 onMounted(async () => {
@@ -149,6 +304,7 @@ onMounted(async () => {
           :active-conversation-id="activeConversationId"
           @select="selectConversation"
           @create="createNewConversation"
+          @delete="removeConversation"
           @prompt="askQuestion"
         />
 
@@ -157,7 +313,12 @@ onMounted(async () => {
           :stats="stats"
           :conversation-title="activeConversationTitle"
           :is-asking="isAsking"
+          :retrieval-mode-label="retrievalModeLabel"
+          :response-mode="responseMode"
+          :can-switch-response-mode="!isAsking"
           @send="askQuestion"
+          @stop="stopAnswer"
+          @change-response-mode="changeResponseMode"
         />
 
         <HomeContextPanel />

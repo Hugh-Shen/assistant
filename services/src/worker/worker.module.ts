@@ -1,6 +1,12 @@
 import { Module } from "@nestjs/common"
 import { ConfigModule } from "@nestjs/config"
-import { appConfig, databaseConfig, documentConfig, llmConfig } from "../config"
+import {
+  appConfig,
+  databaseConfig,
+  documentConfig,
+  llmConfig,
+  ragConfig,
+} from "../config"
 import { DocumentWorkerModule } from "../modules/document/document-worker.module"
 
 @Module({
@@ -8,7 +14,7 @@ import { DocumentWorkerModule } from "../modules/document/document-worker.module
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [".env.local", ".env"],
-      load: [appConfig, databaseConfig, documentConfig, llmConfig],
+      load: [appConfig, databaseConfig, documentConfig, llmConfig, ragConfig],
     }),
     DocumentWorkerModule,
   ],

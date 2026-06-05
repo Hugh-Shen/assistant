@@ -98,8 +98,13 @@ async function post<T>(
   })
 }
 
+function isCancel(error: unknown) {
+  return axios.isCancel(error)
+}
+
 export const http = {
   request,
   get,
   post,
+  isCancel,
 }

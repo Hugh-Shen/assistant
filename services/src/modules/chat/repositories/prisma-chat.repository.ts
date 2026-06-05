@@ -68,6 +68,24 @@ export class PrismaChatRepository implements ChatRepository {
     return row ? rowToConversation(row) : null
   }
 
+  async updateConversationTitle(conversationId: string, title: string) {
+    const updated = await this.prisma.chatConversation.update({
+      where: { id: conversationId },
+      data: {
+        title,
+        updatedAt: new Date(),
+      },
+    })
+
+    return rowToConversation(updated)
+  }
+
+  async deleteConversation(conversationId: string) {
+    await this.prisma.chatConversation.delete({
+      where: { id: conversationId },
+    })
+  }
+
   async createMessage(conversationId: string, role: ChatMessageRecord["role"], content: string) {
     const created = await this.prisma.chatMessage.create({
       data: {

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { Lightbulb, SquarePen } from "@lucide/vue"
+import { ref } from "vue"
+import { Lightbulb, SquarePen, Trash2 } from "@lucide/vue"
+import { AlertDialog } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 
 export interface ConversationItem {
@@ -18,7 +20,25 @@ const emit = defineEmits<{
   select: [conversationId: string]
   create: []
   prompt: [question: string]
+  delete: [conversationId: string]
 }>()
+
+const deletingConversationId = ref<string>()
+const confirmOpen = ref(false)
+
+function requestDelete(conversationId: string) {
+  deletingConversationId.value = conversationId
+  confirmOpen.value = true
+}
+
+function confirmDelete() {
+  if (!deletingConversationId.value) {
+    return
+  }
+
+  emit("delete", deletingConversationId.value)
+  deletingConversationId.value = undefined
+}
 </script>
 
 <template>
@@ -35,20 +55,35 @@ const emit = defineEmits<{
       </div>
 
       <div class="mt-4 space-y-2">
-        <button
+        <div
           v-for="conversation in props.conversations"
           :key="conversation.id"
-          class="w-full rounded-xl border px-3 py-3 text-left transition dark:bg-slate-900/60 dark:hover:border-white/10 dark:hover:bg-slate-900"
+          class="rounded-xl border px-3 py-3 transition dark:bg-slate-900/60 dark:hover:border-white/10 dark:hover:bg-slate-900"
           :class="conversation.id === props.activeConversationId
             ? 'border-slate-300 bg-white dark:border-white/20 dark:bg-slate-900'
             : 'border-transparent bg-slate-50 hover:border-slate-200 hover:bg-white'"
-          @click="emit('select', conversation.id)"
         >
-          <p class="text-sm font-medium">{{ conversation.title }}</p>
-          <p class="mt-1 max-h-10 overflow-hidden text-xs leading-5 text-slate-500 dark:text-slate-400">
-            {{ conversation.preview }}
-          </p>
-        </button>
+          <div class="flex items-start gap-2">
+            <button
+              class="min-w-0 flex-1 text-left"
+              @click="emit('select', conversation.id)"
+            >
+              <p class="truncate text-sm font-medium">{{ conversation.title }}</p>
+              <p class="mt-1 max-h-10 overflow-hidden text-xs leading-5 text-slate-500 dark:text-slate-400">
+                {{ conversation.preview }}
+              </p>
+            </button>
+
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="shrink-0 rounded-lg text-slate-500 hover:text-red-500"
+              @click.stop="requestDelete(conversation.id)"
+            >
+              <Trash2 class="size-4" />
+            </Button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -70,5 +105,14 @@ const emit = defineEmits<{
         </Button>
       </div>
     </section>
+
+    <AlertDialog
+      v-model:open="confirmOpen"
+      title="删除这个会话？"
+      description="删除后会话记录和消息历史将无法恢复。"
+      confirm-text="确认删除"
+      cancel-text="再想想"
+      @confirm="confirmDelete"
+    />
   </aside>
 </template>

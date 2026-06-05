@@ -1,22 +1,21 @@
 import { Inject, Injectable } from "@nestjs/common"
 import { ConfigType } from "@nestjs/config"
-import OpenAI from "openai"
 import type { ChatMessageRecord, RagCitation } from "@assistant/shared"
+import { Observable } from "rxjs"
 import { llmConfig } from "../../config"
+import {
+  LLM_CLIENT_REPOSITORY,
+  type LlmClientRepository,
+} from "../shared/ports/llm-client.port"
 
 @Injectable()
 export class AnswerGenerationService {
-  private readonly client: OpenAI
-
   constructor(
+    @Inject(LLM_CLIENT_REPOSITORY)
+    private readonly llmClientRepository: LlmClientRepository,
     @Inject(llmConfig.KEY)
     private readonly config: ConfigType<typeof llmConfig>,
-  ) {
-    this.client = new OpenAI({
-      apiKey: this.config.openaiApiKey,
-      baseURL: this.config.openaiApiBaseUrl || undefined,
-    })
-  }
+  ) {}
 
   async answer(
     question: string,
@@ -30,17 +29,18 @@ export class AnswerGenerationService {
     const context = citations
       .map(
         (item, index) =>
-          `Source ${index + 1}:\nDocument: ${item.documentId}\nChunk: ${item.chunkId}\nContent: ${item.text}`,
+          `Source ${index + 1}:\nType: ${item.sourceType}\nSource: ${item.source ?? "unknown"}\nTitle: ${item.title ?? item.documentId ?? "untitled"}\nURL: ${item.url ?? "n/a"}\nDocument: ${item.documentId ?? "n/a"}\nChunk: ${item.chunkId ?? "n/a"}\nContent: ${item.text}`,
       )
       .join("\n\n")
 
-    const response = await this.client.chat.completions.create({
+    const response =
+      await this.llmClientRepository.getClient().chat.completions.create({
       model: this.config.chatModel,
       messages: [
         {
           role: "system",
           content:
-            "You are a retrieval-augmented assistant. Answer with the provided context only when possible. If the context is insufficient, say so plainly.",
+            "You are a retrieval-augmented assistant. Prefer knowledge-base context when it directly answers the question. Use web context when the knowledge base is insufficient. If neither context is enough, say so plainly.",
         },
         {
           role: "user",
@@ -56,5 +56,77 @@ export class AnswerGenerationService {
     }
 
     return output
+  }
+
+  streamAnswer(
+    question: string,
+    citations: RagCitation[],
+    history: ChatMessageRecord[] = [],
+  ): Observable<string> {
+    return new Observable<string>(subscriber => {
+      const historyBlock = history
+        .map(message => `${message.role.toUpperCase()}: ${message.content}`)
+        .join("\n")
+
+      const context = citations
+        .map(
+          (item, index) =>
+            `Source ${index + 1}:\nType: ${item.sourceType}\nSource: ${item.source ?? "unknown"}\nTitle: ${item.title ?? item.documentId ?? "untitled"}\nURL: ${item.url ?? "n/a"}\nDocument: ${item.documentId ?? "n/a"}\nChunk: ${item.chunkId ?? "n/a"}\nContent: ${item.text}`,
+        )
+        .join("\n\n")
+
+      const controller = new AbortController()
+
+      void (async () => {
+        try {
+          const stream =
+            await this.llmClientRepository.getClient().chat.completions.create(
+              {
+                model: this.config.chatModel,
+                stream: true,
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      "You are a retrieval-augmented assistant. Prefer knowledge-base context when it directly answers the question. Use web context when the knowledge base is insufficient. If neither context is enough, say so plainly.",
+                  },
+                  {
+                    role: "user",
+                    content: `Conversation History:\n${historyBlock || "No prior history"}\n\nQuestion:\n${question}\n\nContext:\n${context}`,
+                  },
+                ],
+              },
+              {
+                signal: controller.signal,
+              },
+            )
+
+          for await (const chunk of stream) {
+            const delta = chunk.choices[0]?.delta?.content
+
+            if (!delta) {
+              continue
+            }
+
+            subscriber.next(delta)
+          }
+
+          subscriber.complete()
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+
+          if (message.toLowerCase().includes("aborted")) {
+            subscriber.complete()
+            return
+          }
+
+          subscriber.error(error)
+        }
+      })()
+
+      return () => {
+        controller.abort()
+      }
+    })
   }
 }

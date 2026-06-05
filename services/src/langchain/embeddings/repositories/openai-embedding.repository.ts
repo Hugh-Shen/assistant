@@ -1,8 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common"
 import { ConfigType } from "@nestjs/config"
-import OpenAI from "openai"
 import { databaseConfig, llmConfig } from "../../../config"
 import type { EmbeddingResult, EmbeddingService } from "../ports/embedding.port"
+import {
+  LLM_CLIENT_REPOSITORY,
+  type LlmClientRepository,
+} from "../../shared/ports/llm-client.port"
 
 function normalizeVectorDimension(vector: number[], dimension: number) {
   if (vector.length === dimension) {
@@ -18,23 +21,18 @@ function normalizeVectorDimension(vector: number[], dimension: number) {
 
 @Injectable()
 export class OpenAiEmbeddingRepository implements EmbeddingService {
-  private readonly client: OpenAI
-
   constructor(
+    @Inject(LLM_CLIENT_REPOSITORY)
+    private readonly llmClientRepository: LlmClientRepository,
     @Inject(llmConfig.KEY)
     private readonly config: ConfigType<typeof llmConfig>,
     @Inject(databaseConfig.KEY)
     private readonly database: ConfigType<typeof databaseConfig>,
-  ) {
-    this.client = new OpenAI({
-      apiKey: this.config.openaiApiKey,
-      baseURL: this.config.openaiApiBaseUrl || undefined,
-      
-    })
-  }
+  ) {}
 
   async embed(text: string): Promise<EmbeddingResult> {
-    const response = await this.client.embeddings.create({
+    const response =
+      await this.llmClientRepository.getClient().embeddings.create({
       model: this.config.embeddingModel,
       input: text,
     })

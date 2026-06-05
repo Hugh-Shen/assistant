@@ -2,5 +2,9 @@ export { default as HomeTopbar } from "./HomeTopbar.vue"
 export { default as HomeSidebar } from "./HomeSidebar.vue"
 export { default as HomeChatArea } from "./HomeChatArea.vue"
 export { default as HomeContextPanel } from "./HomeContextPanel.vue"
-export type { ChatMessage, ChatStat } from "./HomeChatArea.vue"
+export type {
+  ChatMessage,
+  ChatStat,
+  ResponseModeOption,
+} from "./HomeChatArea.vue"
 export type { ConversationItem } from "./HomeSidebar.vue"

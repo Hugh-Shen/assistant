@@ -17,6 +17,14 @@ export interface CreateConversationResponse {
   conversation: ChatConversation
 }
 
+export interface DeleteConversationResponse {
+  conversationId: string
+}
+
+export interface UpdateConversationTitleResponse {
+  conversation: ChatConversation
+}
+
 export interface ListConversationsResponse {
   conversations: ChatConversation[]
 }

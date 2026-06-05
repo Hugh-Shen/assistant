@@ -40,6 +40,8 @@ export class PgvectorRetrieverService {
     )
 
     return rows.map(row => ({
+      sourceType: "knowledge_base",
+      source: "pgvector",
       documentId: row.document_id,
       chunkId: row.chunk_id,
       text: row.text,
