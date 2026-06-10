@@ -14,6 +14,7 @@ import {
 
 interface HybridRetrievalResult {
   retrievalMode: RagRetrievalMode
+  routingReason: string
   citations: RagCitation[]
   knowledgeBaseCitations: RagCitation[]
   webCitations: RagCitation[]
@@ -35,9 +36,12 @@ export class HybridRetrieverService {
     question: string,
     topK = this.configService.get<number>("rag.maxKnowledgeBaseResults", 4),
   ): Promise<HybridRetrievalResult> {
-    const knowledgeBaseCitations = await this.knowledgeBaseRetriever.search(
+    const rawKnowledgeBaseCitations = await this.knowledgeBaseRetriever.search(
       question,
       topK,
+    )
+    const knowledgeBaseCitations = this.filterKnowledgeBaseCitations(
+      rawKnowledgeBaseCitations,
     )
     const routing = await this.contextSufficiencyService.decideKnowledgeBaseRouting(
       question,
@@ -51,6 +55,7 @@ export class HybridRetrieverService {
     if (routing.shouldUseKnowledgeBaseOnly && webCitations.length === 0) {
       return {
         retrievalMode: "knowledge_base",
+        routingReason: routing.reason,
         citations: knowledgeBaseCitations,
         knowledgeBaseCitations,
         webCitations,
@@ -64,6 +69,7 @@ export class HybridRetrieverService {
     ) {
       return {
         retrievalMode: "hybrid",
+        routingReason: routing.reason,
         citations: [...knowledgeBaseCitations, ...webCitations],
         knowledgeBaseCitations,
         webCitations,
@@ -73,6 +79,7 @@ export class HybridRetrieverService {
     if (webCitations.length > 0) {
       return {
         retrievalMode: "search",
+        routingReason: routing.reason,
         citations: webCitations,
         knowledgeBaseCitations,
         webCitations,
@@ -82,6 +89,7 @@ export class HybridRetrieverService {
     if (knowledgeBaseCitations.length > 0) {
       return {
         retrievalMode: "knowledge_base",
+        routingReason: routing.reason,
         citations: knowledgeBaseCitations,
         knowledgeBaseCitations,
         webCitations,
@@ -90,6 +98,7 @@ export class HybridRetrieverService {
 
     return {
       retrievalMode: "none",
+      routingReason: routing.reason,
       citations: [],
       knowledgeBaseCitations: [],
       webCitations: [],
@@ -143,6 +152,19 @@ export class HybridRetrieverService {
       })
       .filter(citation => citation !== null)
 
-    return citations
+    return citations.filter(
+      citation =>
+        citation.score >=
+        this.configService.get<number>("rag.webGenerationMinScore", 0.15),
+    )
+  }
+
+  private filterKnowledgeBaseCitations(citations: RagCitation[]) {
+    const minScore = this.configService.get<number>(
+      "rag.knowledgeBaseGenerationMinScore",
+      0.1,
+    )
+
+    return citations.filter(citation => citation.score >= minScore)
   }
 }

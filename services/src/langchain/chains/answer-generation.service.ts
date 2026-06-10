@@ -1,8 +1,13 @@
 import { Inject, Injectable } from "@nestjs/common"
 import { ConfigType } from "@nestjs/config"
-import type { ChatMessageRecord, RagCitation } from "@assistant/shared"
+import type {
+  ChatMessageRecord,
+  RagCitation,
+  RagRetrievalMode,
+} from "@assistant/shared"
 import { Observable } from "rxjs"
 import { llmConfig } from "../../config"
+import { buildRagAnswerPrompt } from "../prompts/rag-answer.prompt"
 import {
   LLM_CLIENT_REPOSITORY,
   type LlmClientRepository,
@@ -20,18 +25,15 @@ export class AnswerGenerationService {
   async answer(
     question: string,
     citations: RagCitation[],
+    retrievalMode: RagRetrievalMode,
     history: ChatMessageRecord[] = [],
   ) {
-    const historyBlock = history
-      .map(message => `${message.role.toUpperCase()}: ${message.content}`)
-      .join("\n")
-
-    const context = citations
-      .map(
-        (item, index) =>
-          `Source ${index + 1}:\nType: ${item.sourceType}\nSource: ${item.source ?? "unknown"}\nTitle: ${item.title ?? item.documentId ?? "untitled"}\nURL: ${item.url ?? "n/a"}\nDocument: ${item.documentId ?? "n/a"}\nChunk: ${item.chunkId ?? "n/a"}\nContent: ${item.text}`,
-      )
-      .join("\n\n")
+    const prompt = buildRagAnswerPrompt({
+      question,
+      citations,
+      retrievalMode,
+      history,
+    })
 
     const response =
       await this.llmClientRepository.getClient().chat.completions.create({
@@ -39,12 +41,11 @@ export class AnswerGenerationService {
       messages: [
         {
           role: "system",
-          content:
-            "You are a retrieval-augmented assistant. Prefer knowledge-base context when it directly answers the question. Use web context when the knowledge base is insufficient. If neither context is enough, say so plainly.",
+          content: prompt.system,
         },
         {
           role: "user",
-          content: `Conversation History:\n${historyBlock || "No prior history"}\n\nQuestion:\n${question}\n\nContext:\n${context}`,
+          content: prompt.user,
         },
       ],
     })
@@ -61,21 +62,18 @@ export class AnswerGenerationService {
   streamAnswer(
     question: string,
     citations: RagCitation[],
+    retrievalMode: RagRetrievalMode,
     history: ChatMessageRecord[] = [],
   ): Observable<string> {
     return new Observable<string>(subscriber => {
-      const historyBlock = history
-        .map(message => `${message.role.toUpperCase()}: ${message.content}`)
-        .join("\n")
-
-      const context = citations
-        .map(
-          (item, index) =>
-            `Source ${index + 1}:\nType: ${item.sourceType}\nSource: ${item.source ?? "unknown"}\nTitle: ${item.title ?? item.documentId ?? "untitled"}\nURL: ${item.url ?? "n/a"}\nDocument: ${item.documentId ?? "n/a"}\nChunk: ${item.chunkId ?? "n/a"}\nContent: ${item.text}`,
-        )
-        .join("\n\n")
-
       const controller = new AbortController()
+
+      const prompt = buildRagAnswerPrompt({
+        question,
+        citations,
+        retrievalMode,
+        history,
+      })
 
       void (async () => {
         try {
@@ -87,12 +85,11 @@ export class AnswerGenerationService {
                 messages: [
                   {
                     role: "system",
-                    content:
-                      "You are a retrieval-augmented assistant. Prefer knowledge-base context when it directly answers the question. Use web context when the knowledge base is insufficient. If neither context is enough, say so plainly.",
+                    content: prompt.system,
                   },
                   {
                     role: "user",
-                    content: `Conversation History:\n${historyBlock || "No prior history"}\n\nQuestion:\n${question}\n\nContext:\n${context}`,
+                    content: prompt.user,
                   },
                 ],
               },

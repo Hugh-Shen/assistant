@@ -1,19 +1,19 @@
 <script setup lang="ts">
 import type {
-  ChatConversation,
   ChatMessageRecord,
   RagAnswerChunkEvent,
   RagAnswerCompletedEvent,
   RagAnswerStartedEvent,
   RagRetrievalMode,
 } from "@assistant/shared"
+import gsap from "gsap"
 import { computed, onMounted, ref } from "vue"
 import {
-  askRagQuestion,
-  deleteConversation,
   createConversation,
+  deleteConversation,
   getConversationMessages,
   listConversations,
+  askRagQuestion,
   updateConversationTitle,
 } from "@/api/chat"
 import { http } from "@/lib/http"
@@ -34,8 +34,17 @@ const activeConversationId = ref<string>()
 const activeConversationTitle = ref("")
 const isAsking = ref(false)
 const activeRetrievalMode = ref<RagRetrievalMode>("knowledge_base")
+const activeRoutingReason = ref("")
 const askAbortController = ref<AbortController | null>(null)
 const responseMode = ref<ResponseModeOption>("stream")
+const streamingRenderTarget = ref<ChatMessage | null>(null)
+const streamingCompleted = ref(false)
+const streamingRenderCompletionResolver = ref<(() => void) | null>(null)
+const streamingRevealProgress = {
+  value: 0,
+}
+const STREAMING_CHARS_PER_SECOND = 42
+let streamingTickerAttached = false
 
 const quickPrompts = [
   "帮我把这个页面改成更像 GPT 的布局",
@@ -81,6 +90,104 @@ function toUiMessages(records: ChatMessageRecord[]): ChatMessage[] {
 function buildConversationPreview(records: ChatMessageRecord[]) {
   const lastMessage = [...records].reverse().find(record => record.role === "user")
   return lastMessage?.content || "点击查看历史消息"
+}
+
+function syncDisplayedStreamingContent(target: ChatMessage) {
+  const nextLength = Math.max(
+    0,
+    Math.min(target.content.length, Math.floor(streamingRevealProgress.value)),
+  )
+  target.displayContent = target.content.slice(0, nextLength)
+}
+
+function stopStreamingTicker() {
+  if (!streamingTickerAttached) {
+    return
+  }
+
+  gsap.ticker.remove(handleStreamingTick)
+  streamingTickerAttached = false
+}
+
+function handleStreamingTick(_: number, deltaTime: number) {
+  const target = streamingRenderTarget.value
+
+  if (!target) {
+    stopStreamingTicker()
+    return
+  }
+
+  const targetLength = target.content.length
+  const revealedLength = target.displayContent?.length ?? 0
+
+  if (revealedLength >= targetLength) {
+    if (streamingCompleted.value) {
+      completeStreamingRender()
+    }
+    return
+  }
+
+  streamingRevealProgress.value += (deltaTime / 1000) * STREAMING_CHARS_PER_SECOND
+
+  if (streamingRevealProgress.value < revealedLength + 1) {
+    streamingRevealProgress.value = revealedLength + 1
+  }
+
+  syncDisplayedStreamingContent(target)
+}
+
+function ensureStreamingTicker() {
+  if (streamingTickerAttached) {
+    return
+  }
+
+  gsap.ticker.add(handleStreamingTick)
+  streamingTickerAttached = true
+}
+
+function completeStreamingRender() {
+  const target = streamingRenderTarget.value
+
+  if (!target) {
+    return
+  }
+
+  target.displayContent = target.content
+  target.pending = false
+  streamingRenderTarget.value = null
+  streamingRevealProgress.value = 0
+  streamingCompleted.value = false
+  stopStreamingTicker()
+  streamingRenderCompletionResolver.value?.()
+  streamingRenderCompletionResolver.value = null
+}
+
+function animateStreamingMessage(target: ChatMessage) {
+  if (streamingRenderTarget.value !== target) {
+    streamingRenderTarget.value = target
+    streamingRevealProgress.value = target.displayContent?.length ?? 0
+    syncDisplayedStreamingContent(target)
+  }
+  ensureStreamingTicker()
+}
+
+function resetStreamingQueue() {
+  stopStreamingTicker()
+  streamingRevealProgress.value = 0
+  streamingCompleted.value = false
+  streamingRenderTarget.value = null
+  streamingRenderCompletionResolver.value?.()
+  streamingRenderCompletionResolver.value = null
+}
+
+function waitForStreamingRender(target: ChatMessage) {
+  if (!target.pending || streamingRenderTarget.value !== target) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>(resolve => {
+    streamingRenderCompletionResolver.value = resolve
+  })
 }
 
 async function loadConversations() {
@@ -153,6 +260,7 @@ async function askQuestion(question: string) {
 
   try {
     askAbortController.value = new AbortController()
+    resetStreamingQueue()
 
     if (activeConversationId.value) {
       const updated = await updateConversationTitle(activeConversationId.value, question)
@@ -165,6 +273,7 @@ async function askQuestion(question: string) {
     const assistantMessage: ChatMessage = {
       role: "assistant",
       content: "",
+      displayContent: "",
       pending: true,
       citations: [],
     }
@@ -183,6 +292,7 @@ async function askQuestion(question: string) {
             if (message.event === "started") {
               const payload = message.data as RagAnswerStartedEvent
               activeRetrievalMode.value = payload.retrievalMode
+              activeRoutingReason.value = payload.routingReason
               assistantMessage.citations = payload.citations
               return
             }
@@ -190,19 +300,24 @@ async function askQuestion(question: string) {
             if (message.event === "delta") {
               const payload = message.data as RagAnswerChunkEvent
               assistantMessage.content += payload.delta
+              animateStreamingMessage(assistantMessage)
               return
             }
 
             if (message.event === "completed") {
               const payload = message.data as RagAnswerCompletedEvent
               activeRetrievalMode.value = payload.retrievalMode
-              assistantMessage.content = payload.answer
+              activeRoutingReason.value = payload.routingReason
               assistantMessage.citations = payload.citations
-              assistantMessage.pending = false
+              assistantMessage.content = payload.answer
+              streamingCompleted.value = true
+              animateStreamingMessage(assistantMessage)
             }
           },
         },
       )
+
+      await waitForStreamingRender(assistantMessage)
     } else {
       const payload = await askRagQuestion(
         {
@@ -215,6 +330,7 @@ async function askQuestion(question: string) {
       )
 
       activeRetrievalMode.value = payload.retrievalMode
+      activeRoutingReason.value = payload.routingReason
       assistantMessage.content = payload.answer
       assistantMessage.citations = payload.citations
       assistantMessage.pending = false
@@ -226,6 +342,7 @@ async function askQuestion(question: string) {
     }
   } catch (error) {
     if (http.isCancel(error)) {
+      resetStreamingQueue()
       const lastMessage = messages.value[messages.value.length - 1]
 
       if (lastMessage?.role === "assistant" && lastMessage.pending) {
@@ -239,6 +356,7 @@ async function askQuestion(question: string) {
       return
     }
 
+    resetStreamingQueue()
     const lastMessage = messages.value[messages.value.length - 1]
     if (lastMessage?.role === "assistant" && lastMessage.pending) {
       messages.value.pop()
@@ -252,6 +370,7 @@ async function askQuestion(question: string) {
           : "请求失败，请稍后再试。",
     })
   } finally {
+    resetStreamingQueue()
     askAbortController.value = null
     isAsking.value = false
   }
@@ -276,6 +395,7 @@ async function removeConversation(conversationId: string) {
     activeConversationId.value = undefined
     activeConversationTitle.value = ""
     activeRetrievalMode.value = "knowledge_base"
+    activeRoutingReason.value = ""
     messages.value = [
       {
         role: "assistant",

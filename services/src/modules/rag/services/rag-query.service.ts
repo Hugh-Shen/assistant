@@ -29,6 +29,7 @@ export class RagQueryService {
     const answer = await this.answerGeneration.answer(
       question,
       retrieval.citations,
+      retrieval.retrievalMode,
       history,
     )
 
@@ -42,6 +43,7 @@ export class RagQueryService {
       question,
       answer,
       retrievalMode: retrieval.retrievalMode,
+      routingReason: retrieval.routingReason,
       citations: retrieval.citations,
     }
   }
@@ -64,11 +66,13 @@ export class RagQueryService {
       initial: {
         question,
         retrievalMode: retrieval.retrievalMode,
+        routingReason: retrieval.routingReason,
         citations: retrieval.citations,
       },
       stream: this.answerGeneration.streamAnswer(
         question,
         retrieval.citations,
+        retrieval.retrievalMode,
         history,
       ),
       persist: async (answer: string) => {

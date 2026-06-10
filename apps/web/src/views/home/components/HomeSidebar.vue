@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
-import { Lightbulb, SquarePen, Trash2 } from "@lucide/vue"
+import { Lightbulb, SquarePlus, Trash2, Plus } from "@lucide/vue"
 import { AlertDialog } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 
@@ -50,7 +50,7 @@ function confirmDelete() {
           <p class="text-xs text-slate-500 dark:text-slate-400">最近会话</p>
         </div>
         <Button variant="ghost" size="icon-sm" class="rounded-xl" @click="emit('create')">
-          <SquarePen class="size-4" />
+          <SquarePlus class="size-4" />
         </Button>
       </div>
 

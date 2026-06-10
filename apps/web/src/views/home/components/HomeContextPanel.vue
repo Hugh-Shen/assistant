@@ -1,3 +1,10 @@
+<script setup lang="ts">
+defineProps<{
+  retrievalModeLabel?: string
+  routingReason?: string
+}>()
+</script>
+
 <template>
   <aside class="hidden flex-col gap-4 xl:flex">
     <section class="rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-slate-950/70">
@@ -14,6 +21,24 @@
         <div class="rounded-xl bg-slate-50 px-3 py-3 dark:bg-slate-900/60">
           <p class="font-medium">3. 指定输出</p>
           <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">布局、交互、文案、状态都可以明确列出。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-slate-950/70">
+      <p class="text-sm font-semibold">RAG debug</p>
+      <div class="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
+        <div class="rounded-xl bg-slate-50 px-3 py-3 dark:bg-slate-900/60">
+          <p class="font-medium">retrievalMode</p>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {{ retrievalModeLabel || "Unknown" }}
+          </p>
+        </div>
+        <div class="rounded-xl bg-slate-50 px-3 py-3 dark:bg-slate-900/60">
+          <p class="font-medium">routingReason</p>
+          <p class="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">
+            {{ routingReason || "N/A" }}
+          </p>
         </div>
       </div>
     </section>

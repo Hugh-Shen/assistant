@@ -20,6 +20,10 @@ export const ragConfig = registerAs("rag", () => ({
     process.env.RAG_KB_HIGH_CONFIDENCE_MIN_COUNT ?? 2,
   ),
   hybridBlendMaxScore: Number(process.env.RAG_HYBRID_BLEND_MAX_SCORE ?? 0.12),
+  knowledgeBaseGenerationMinScore: Number(
+    process.env.RAG_KB_GENERATION_MIN_SCORE ?? 0.1,
+  ),
+  webGenerationMinScore: Number(process.env.RAG_WEB_GENERATION_MIN_SCORE ?? 0.15),
   jinaApiKey: process.env.JINA_API_KEY ?? "",
   tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
 }))

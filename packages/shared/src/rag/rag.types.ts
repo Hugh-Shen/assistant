@@ -27,12 +27,14 @@ export interface RagAskResponse {
   question: string
   answer: string
   retrievalMode: RagRetrievalMode
+  routingReason: string
   citations: RagCitation[]
 }
 
 export interface RagAnswerStartedEvent {
   question: string
   retrievalMode: RagRetrievalMode
+  routingReason: string
   citations: RagCitation[]
 }
 
@@ -44,5 +46,6 @@ export interface RagAnswerCompletedEvent {
   question: string
   answer: string
   retrievalMode: RagRetrievalMode
+  routingReason: string
   citations: RagCitation[]
 }
