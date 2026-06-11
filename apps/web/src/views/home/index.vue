@@ -6,7 +6,6 @@ import type {
   RagAnswerStartedEvent,
   RagRetrievalMode,
 } from "@assistant/shared"
-import gsap from "gsap"
 import { computed, onMounted, ref } from "vue"
 import {
   createConversation,
@@ -44,7 +43,8 @@ const streamingRevealProgress = {
   value: 0,
 }
 const STREAMING_CHARS_PER_SECOND = 42
-let streamingTickerAttached = false
+let streamingAnimationFrameId: number | null = null
+let streamingLastFrameTime: number | null = null
 
 const quickPrompts = [
   "帮我把这个页面改成更像 GPT 的布局",
@@ -100,22 +100,27 @@ function syncDisplayedStreamingContent(target: ChatMessage) {
   target.displayContent = target.content.slice(0, nextLength)
 }
 
-function stopStreamingTicker() {
-  if (!streamingTickerAttached) {
+function stopStreamingRenderLoop() {
+  if (streamingAnimationFrameId === null) {
     return
   }
 
-  gsap.ticker.remove(handleStreamingTick)
-  streamingTickerAttached = false
+  window.cancelAnimationFrame(streamingAnimationFrameId)
+  streamingAnimationFrameId = null
+  streamingLastFrameTime = null
 }
 
-function handleStreamingTick(_: number, deltaTime: number) {
+function handleStreamingFrame(timestamp: number) {
   const target = streamingRenderTarget.value
 
   if (!target) {
-    stopStreamingTicker()
+    stopStreamingRenderLoop()
     return
   }
+
+  const deltaTime =
+    streamingLastFrameTime === null ? 16.67 : timestamp - streamingLastFrameTime
+  streamingLastFrameTime = timestamp
 
   const targetLength = target.content.length
   const revealedLength = target.displayContent?.length ?? 0
@@ -123,26 +128,27 @@ function handleStreamingTick(_: number, deltaTime: number) {
   if (revealedLength >= targetLength) {
     if (streamingCompleted.value) {
       completeStreamingRender()
+      return
     }
-    return
+  } else {
+    streamingRevealProgress.value += (deltaTime / 1000) * STREAMING_CHARS_PER_SECOND
+
+    if (streamingRevealProgress.value < revealedLength + 1) {
+      streamingRevealProgress.value = revealedLength + 1
+    }
+
+    syncDisplayedStreamingContent(target)
   }
 
-  streamingRevealProgress.value += (deltaTime / 1000) * STREAMING_CHARS_PER_SECOND
-
-  if (streamingRevealProgress.value < revealedLength + 1) {
-    streamingRevealProgress.value = revealedLength + 1
-  }
-
-  syncDisplayedStreamingContent(target)
+  streamingAnimationFrameId = window.requestAnimationFrame(handleStreamingFrame)
 }
 
-function ensureStreamingTicker() {
-  if (streamingTickerAttached) {
+function ensureStreamingRenderLoop() {
+  if (streamingAnimationFrameId !== null) {
     return
   }
 
-  gsap.ticker.add(handleStreamingTick)
-  streamingTickerAttached = true
+  streamingAnimationFrameId = window.requestAnimationFrame(handleStreamingFrame)
 }
 
 function completeStreamingRender() {
@@ -157,7 +163,7 @@ function completeStreamingRender() {
   streamingRenderTarget.value = null
   streamingRevealProgress.value = 0
   streamingCompleted.value = false
-  stopStreamingTicker()
+  stopStreamingRenderLoop()
   streamingRenderCompletionResolver.value?.()
   streamingRenderCompletionResolver.value = null
 }
@@ -168,11 +174,11 @@ function animateStreamingMessage(target: ChatMessage) {
     streamingRevealProgress.value = target.displayContent?.length ?? 0
     syncDisplayedStreamingContent(target)
   }
-  ensureStreamingTicker()
+  ensureStreamingRenderLoop()
 }
 
 function resetStreamingQueue() {
-  stopStreamingTicker()
+  stopStreamingRenderLoop()
   streamingRevealProgress.value = 0
   streamingCompleted.value = false
   streamingRenderTarget.value = null

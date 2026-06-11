@@ -15,6 +15,9 @@ import {
 
 @Injectable()
 export class AnswerGenerationService {
+  private static readonly NO_CONTEXT_FALLBACK_ANSWER =
+    "抱歉，我暂时不知道这个问题的答案。"
+
   constructor(
     @Inject(LLM_CLIENT_REPOSITORY)
     private readonly llmClientRepository: LlmClientRepository,
@@ -35,20 +38,26 @@ export class AnswerGenerationService {
       history,
     })
 
+    const fallbackAnswer = this.getFallbackAnswer(retrievalMode, citations)
+
+    if (fallbackAnswer) {
+      return fallbackAnswer
+    }
+
     const response =
       await this.llmClientRepository.getClient().chat.completions.create({
-      model: this.config.chatModel,
-      messages: [
-        {
-          role: "system",
-          content: prompt.system,
-        },
-        {
-          role: "user",
-          content: prompt.user,
-        },
-      ],
-    })
+        model: this.config.chatModel,
+        messages: [
+          {
+            role: "system",
+            content: prompt.system,
+          },
+          {
+            role: "user",
+            content: prompt.user,
+          },
+        ],
+      })
 
     const output = response.choices[0]?.message?.content?.trim()
 
@@ -67,6 +76,13 @@ export class AnswerGenerationService {
   ): Observable<string> {
     return new Observable<string>(subscriber => {
       const controller = new AbortController()
+      const fallbackAnswer = this.getFallbackAnswer(retrievalMode, citations)
+
+      if (fallbackAnswer) {
+        subscriber.next(fallbackAnswer)
+        subscriber.complete()
+        return () => undefined
+      }
 
       const prompt = buildRagAnswerPrompt({
         question,
@@ -125,5 +141,23 @@ export class AnswerGenerationService {
         controller.abort()
       }
     })
+  }
+
+  private getFallbackAnswer(
+    retrievalMode: RagRetrievalMode,
+    citations: RagCitation[],
+  ) {
+    if (retrievalMode === "none") {
+      return AnswerGenerationService.NO_CONTEXT_FALLBACK_ANSWER
+    }
+
+    if (
+      (retrievalMode === "search" || retrievalMode === "hybrid") &&
+      citations.length === 0
+    ) {
+      return AnswerGenerationService.NO_CONTEXT_FALLBACK_ANSWER
+    }
+
+    return null
   }
 }

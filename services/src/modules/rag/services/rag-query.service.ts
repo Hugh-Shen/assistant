@@ -22,7 +22,7 @@ export class RagQueryService {
     topK = 4,
     conversationId?: string,
   ): Promise<RagAskResponse> {
-    const retrieval = await this.retriever.retrieve(question, topK)
+    const retrieval = await this.retriever.retrieve(question, topK)    
     const history = conversationId
       ? await this.chatRepository.listMessages(conversationId)
       : []

@@ -6,7 +6,7 @@
 - `citations` 是生成阶段可用的上下文集合，不是“唯一证据”
 - `score` 是相关性分数，不是向量本身
 - 历史会话只在生成阶段使用，不参与向量召回
-- 生成 prompt 已拆分到独立的 prompt builder，并对 `knowledge_base / hybrid / search / none` 做了细分
+- 生成 prompt 已拆分到独立的 prompt builder，并对 `knowledge_base / search / none` 做了细分
 
 如果要排查“为什么走了 search”“为什么这次 citations 变少了”“为什么回答忽略了某条召回结果”，建议按本文顺序读。
 
@@ -15,12 +15,11 @@
 当前系统支持两类上下文来源：
 
 - 知识库：本地文档 chunk + pgvector
-- Web Search：默认 `Jina Search + Jina Reader`，也预留 `Tavily`
+- Web Search：默认 `Jina Search + Jina Reader`，默认走 `https://s.jinaai.cn` / `https://r.jinaai.cn`，也预留 `Tavily`
 
-系统会把每次请求路由到 4 种模式之一：
+系统会把每次请求路由到 3 种模式之一：
 
 - `knowledge_base`
-- `hybrid`
 - `search`
 - `none`
 
@@ -40,8 +39,7 @@ flowchart TD
   E --> F["PgvectorRetrieverService.search"]
   E --> G["filterKnowledgeBaseCitations"]
   G --> H["ContextSufficiencyService.decideKnowledgeBaseRouting"]
-  H --> I["Rule-first routing"]
-  H --> J["LLM fallback routing"]
+  H --> I["Top-score threshold routing"]
   E --> K["searchWeb(question)"]
   K --> L["WebSearchRepository.search"]
   K --> M["WebReaderRepository.read"]
@@ -237,10 +235,12 @@ const routing = await this.contextSufficiencyService.decideKnowledgeBaseRouting(
   question,
   knowledgeBaseCitations,
 )
+const searchAvailable = this.isSearchAvailable()
 
 const needsWebSearch =
   routing.shouldBlendWithWebSearch || routing.shouldFallbackToWebSearch
-const webCitations = needsWebSearch ? await this.searchWeb(question) : []
+const webCitations =
+  needsWebSearch && searchAvailable ? await this.searchWeb(question) : []
 ```
 
 现在的执行顺序是：
@@ -248,7 +248,7 @@ const webCitations = needsWebSearch ? await this.searchWeb(question) : []
 1. 先做知识库向量召回
 2. 对知识库召回结果做生成前过滤
 3. 用过滤后的知识库结果进行 routing 判定
-4. 只有需要时才做 web search
+4. 只有在 routing 需要且 search provider 可用时才做 web search
 5. 对 web 结果也做生成前过滤
 6. 根据路由和过滤后结果拼出最终 `citations`
 
@@ -334,6 +334,13 @@ private filterKnowledgeBaseCitations(citations: RagCitation[]) {
 
 最终很可能走 `search` 或 `none`。
 
+另外还有一个前置条件：
+
+- `rag.searchProvider = "jina"` 时，必须存在 `JINA_API_KEY`
+- `rag.searchProvider = "tavily"` 时，必须存在 `TAVILY_API_KEY`
+
+否则 retriever 会把 search 视为 unavailable，最后可能回退到 `knowledge_base` 或 `none`。
+
 ### 7.2 Web 结果过滤
 
 `searchWeb(...)` 最后也会做最小分数过滤：
@@ -361,9 +368,9 @@ return citations.filter(
 
 - [services/src/langchain/chains/context-sufficiency.service.ts](/Users/admin/Desktop/works/learn/assistant/services/src/langchain/chains/context-sufficiency.service.ts)
 
-当前 routing 是 rule-first，LLM fallback。
+当前 routing 已简化为单阈值判定，不再使用 LLM 做路由兜底。
 
-### 8.1 规则优先
+### 8.1 单阈值路由
 
 核心代码：
 
@@ -375,59 +382,31 @@ if (citations.length === 0) {
   }
 }
 
-if (topScore < minScore) {
-  return {
-    shouldFallbackToWebSearch: true,
-    reason: "top_score_below_threshold",
-  }
-}
-
-if (
-  highConfidenceCount >= highConfidenceMinCount ||
-  (topScore >= highConfidenceMinScore && secondScore >= minScore)
-) {
+if (topScore >= routeThreshold) {
   return {
     shouldUseKnowledgeBaseOnly: true,
-    reason: "multiple_high_confidence_knowledge_base_hits",
+    reason: "top_score_above_route_threshold",
   }
 }
 
-if (relevantCount === 1 && topScore < hybridBlendMaxScore) {
-  return {
-    shouldBlendWithWebSearch: true,
-    reason: "single_low_confidence_hit_requires_web_blending",
-  }
-}
-
-if (relevantCount >= 1 && topScore >= useOnlyMinScore) {
-  return {
-    shouldUseKnowledgeBaseOnly: true,
-    reason: "top_hit_above_threshold",
-  }
+return {
+  shouldFallbackToWebSearch: true,
+  reason: "top_score_below_route_threshold",
 }
 ```
 
 可以把这些规则理解成：
 
 - 没结果，走 `search`
-- 顶部分数太低，走 `search`
-- 多条高置信命中，走 `knowledge_base`
-- 只有一条弱命中，走 `hybrid`
-- 至少有命中且顶部分数足够高，走 `knowledge_base`
+- 顶部分数 `>= RAG_KB_ROUTE_THRESHOLD`，走 `knowledge_base`
+- 顶部分数 `< RAG_KB_ROUTE_THRESHOLD`，走 `search`
 
-### 8.2 LLM 兜底
+`RAG_KB_ROUTE_THRESHOLD` 支持两种写法：
 
-如果规则无法明确决策，会让模型判断：
+- `0.85`
+- `8.5`
 
-```ts
-"Judge whether the provided knowledge-base context is enough to answer the user's question. Reply with only one of: KNOWLEDGE_BASE, HYBRID, SEARCH."
-```
-
-LLM 只会返回三种结论：
-
-- `KNOWLEDGE_BASE`
-- `HYBRID`
-- `SEARCH`
+如果配置值大于 `1`，系统会自动按 `10` 分制换算成 `0-1` 的相似度阈值。
 
 对应 `routingReason` 分别会落成：
 
@@ -540,6 +519,13 @@ return {
 3. 映射为统一 `RagCitation`
 4. 按 `webGenerationMinScore` 再过滤一次
 
+当前默认 provider 为 `jina` 时，实际会发生两次镜像调用：
+
+1. `JinaSearchRepository.search(...)` 调 `https://s.jinaai.cn/<query>`
+2. `JinaReaderRepository.read(...)` 调 `https://r.jinaai.cn/<url>`
+
+两次请求都会带 `Authorization: Bearer ${JINA_API_KEY}`，并要求返回 markdown。
+
 关键代码：
 
 ```ts
@@ -553,6 +539,14 @@ const readerTargets = searchResults.filter(result => !result.content).slice(
   this.configService.get<number>("rag.maxReaderResults", 2),
 )
 ```
+
+Jina Search 结果解析还有一层兼容逻辑：
+
+- 先尝试把响应当 JSON 结果集解析
+- 不行就解析 markdown 链接
+- 还不行再尝试从裸 URL 文本里提取标题和链接
+
+最后会统一去重，并过滤掉 `jina.ai / jinaai.cn` 自身链接，避免把镜像站结果当成外部 citation。
 
 补正文逻辑：
 
@@ -828,23 +822,23 @@ export interface RagAskResponse {
 - `RAG_MAX_KNOWLEDGE_BASE_RESULTS`
 - `RAG_MAX_WEB_RESULTS`
 - `RAG_MAX_READER_RESULTS`
-- `RAG_KB_FALLBACK_MIN_SCORE`
-- `RAG_KB_USE_ONLY_MIN_SCORE`
-- `RAG_KB_HIGH_CONFIDENCE_MIN_SCORE`
-- `RAG_KB_HIGH_CONFIDENCE_MIN_COUNT`
-- `RAG_HYBRID_BLEND_MAX_SCORE`
+- `RAG_KB_ROUTE_THRESHOLD`
 - `RAG_KB_GENERATION_MIN_SCORE`
 - `RAG_WEB_GENERATION_MIN_SCORE`
+- `JINA_API_KEY`
+- `JINA_SEARCH_BASE_URL`
+- `JINA_READER_BASE_URL`
+- `JINA_REQUEST_TIMEOUT_MS`
+- `TAVILY_API_KEY`
 
 可以把这些配置分两类理解：
 
 路由相关：
 
-- `RAG_KB_FALLBACK_MIN_SCORE`
-- `RAG_KB_USE_ONLY_MIN_SCORE`
-- `RAG_KB_HIGH_CONFIDENCE_MIN_SCORE`
-- `RAG_KB_HIGH_CONFIDENCE_MIN_COUNT`
-- `RAG_HYBRID_BLEND_MAX_SCORE`
+- `RAG_KB_ROUTE_THRESHOLD`
+- `RAG_SEARCH_PROVIDER`
+- `JINA_API_KEY`
+- `TAVILY_API_KEY`
 
 生成上下文过滤相关：
 
@@ -884,6 +878,11 @@ export interface RagAskResponse {
 
 - `retrievalMode: "none"`
 - `citations: []`
+
+常见情况有两种：
+
+- 知识库结果为空或分数太低，且 web search 也没有拿到可用结果
+- routing 需要 web search，但当前 provider 缺少对应 API key，search 被判定为 unavailable
 
 生成层会使用专门的 `none` prompt，要求模型自然承认当前没有足够信息。
 

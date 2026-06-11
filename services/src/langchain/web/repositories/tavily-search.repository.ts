@@ -25,38 +25,42 @@ export class TavilySearchRepository implements WebSearchRepository {
       return []
     }
 
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${tavilyApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query,
-        search_depth: "advanced",
-        max_results: maxResults,
-        chunks_per_source: 2,
-        include_answer: false,
-        include_raw_content: "markdown",
-      }),
-    })
+    try {
+      const response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${tavilyApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query,
+          search_depth: "advanced",
+          max_results: maxResults,
+          chunks_per_source: 2,
+          include_answer: false,
+          include_raw_content: "markdown",
+        }),
+      })
 
-    if (!response.ok) {
+      if (!response.ok) {
+        return []
+      }
+
+      const payload = (await response.json()) as TavilySearchResponse
+
+      return (payload.results ?? [])
+        .filter(result => result.title && result.url)
+        .slice(0, maxResults)
+        .map(result => ({
+          title: result.title!,
+          url: result.url!,
+          content: result.content,
+          snippet: result.content?.slice(0, 400),
+          score: result.score,
+          source: "tavily",
+        }))
+    } catch {
       return []
     }
-
-    const payload = (await response.json()) as TavilySearchResponse
-
-    return (payload.results ?? [])
-      .filter(result => result.title && result.url)
-      .slice(0, maxResults)
-      .map(result => ({
-        title: result.title!,
-        url: result.url!,
-        content: result.content,
-        snippet: result.content?.slice(0, 400),
-        score: result.score,
-        source: "tavily",
-      }))
   }
 }

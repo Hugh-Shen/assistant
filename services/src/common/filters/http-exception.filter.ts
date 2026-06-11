@@ -20,6 +20,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>()
     const request = ctx.getRequest<Request>()
 
+    if (response.headersSent || response.writableEnded) {
+      if (!response.writableEnded) {
+        response.end()
+      }
+      return
+    }
+
     const isHttpException = exception instanceof HttpException
     const status = isHttpException
       ? exception.getStatus()

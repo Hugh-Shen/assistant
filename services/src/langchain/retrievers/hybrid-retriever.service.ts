@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common"
+import { Inject, Injectable, Logger } from "@nestjs/common"
 import { ConfigService } from "@nestjs/config"
 import type { RagCitation, RagRetrievalMode } from "@assistant/shared"
 import { ContextSufficiencyService } from "../chains/context-sufficiency.service"
@@ -22,6 +22,8 @@ interface HybridRetrievalResult {
 
 @Injectable()
 export class HybridRetrieverService {
+  private readonly logger = new Logger(HybridRetrieverService.name)
+
   constructor(
     private readonly knowledgeBaseRetriever: PgvectorRetrieverService,
     private readonly contextSufficiencyService: ContextSufficiencyService,
@@ -47,10 +49,20 @@ export class HybridRetrieverService {
       question,
       knowledgeBaseCitations,
     )
+    const searchAvailable = this.isSearchAvailable()
 
     const needsWebSearch =
       routing.shouldBlendWithWebSearch || routing.shouldFallbackToWebSearch
-    const webCitations = needsWebSearch ? await this.searchWeb(question) : []
+    const webCitations =
+      needsWebSearch && searchAvailable ? await this.searchWeb(question) : []
+
+    if (needsWebSearch && !searchAvailable) {
+      this.logger.warn("Web search was requested by routing but provider is unavailable")
+    }
+
+    if (needsWebSearch && searchAvailable && webCitations.length === 0) {
+      this.logger.warn("Web search was requested by routing but returned no citations")
+    }
 
     if (routing.shouldUseKnowledgeBaseOnly && webCitations.length === 0) {
       return {
@@ -86,10 +98,13 @@ export class HybridRetrieverService {
       }
     }
 
-    if (knowledgeBaseCitations.length > 0) {
+    if (routing.shouldUseKnowledgeBaseOnly && knowledgeBaseCitations.length > 0) {
       return {
         retrievalMode: "knowledge_base",
-        routingReason: routing.reason,
+        routingReason:
+          needsWebSearch && !searchAvailable
+            ? `${routing.reason}_search_unavailable_fallback_to_knowledge_base`
+            : routing.reason,
         citations: knowledgeBaseCitations,
         knowledgeBaseCitations,
         webCitations,
@@ -98,11 +113,24 @@ export class HybridRetrieverService {
 
     return {
       retrievalMode: "none",
-      routingReason: routing.reason,
+      routingReason:
+        needsWebSearch && !searchAvailable
+          ? `${routing.reason}_search_unavailable`
+          : routing.reason,
       citations: [],
       knowledgeBaseCitations: [],
       webCitations: [],
     }
+  }
+
+  private isSearchAvailable() {
+    const provider = this.configService.get<string>("rag.searchProvider", "jina")
+
+    if (provider === "tavily") {
+      return Boolean(this.configService.get<string>("rag.tavilyApiKey", ""))
+    }
+
+    return Boolean(this.configService.get<string>("rag.jinaApiKey", ""))
   }
 
   private async searchWeb(question: string): Promise<RagCitation[]> {

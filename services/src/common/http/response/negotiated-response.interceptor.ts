@@ -8,6 +8,7 @@ import type { Response } from "express"
 import {
   EMPTY,
   Observable,
+  catchError,
   finalize,
   ignoreElements,
   mergeMap,
@@ -77,8 +78,23 @@ export class NegotiatedResponseInterceptor implements NestInterceptor {
       tap(message => {
         writeSseMessage(response, message)
       }),
+      catchError(error => {
+        if (!response.writableEnded) {
+          writeSseMessage(response, {
+            type: "error",
+            data: {
+              message:
+                error instanceof Error ? error.message : "Stream response failed",
+            },
+          })
+        }
+
+        return EMPTY
+      }),
       finalize(() => {
-        response.end()
+        if (!response.writableEnded) {
+          response.end()
+        }
       }),
       ignoreElements(),
     )
