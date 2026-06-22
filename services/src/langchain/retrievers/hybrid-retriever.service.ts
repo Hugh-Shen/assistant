@@ -11,14 +11,10 @@ import {
   WEB_SEARCH_REPOSITORY,
   type WebSearchRepository,
 } from "../web/ports/web-search.repository"
-
-interface HybridRetrievalResult {
-  retrievalMode: RagRetrievalMode
-  routingReason: string
-  citations: RagCitation[]
-  knowledgeBaseCitations: RagCitation[]
-  webCitations: RagCitation[]
-}
+import type {
+  HybridRetrievalResult,
+  RetrievalResolutionContext,
+} from "./types/hybrid-retrieval.types"
 
 @Injectable()
 export class HybridRetrieverService {
@@ -64,63 +60,13 @@ export class HybridRetrieverService {
       this.logger.warn("Web search was requested by routing but returned no citations")
     }
 
-    if (routing.shouldUseKnowledgeBaseOnly && webCitations.length === 0) {
-      return {
-        retrievalMode: "knowledge_base",
-        routingReason: routing.reason,
-        citations: knowledgeBaseCitations,
-        knowledgeBaseCitations,
-        webCitations,
-      }
-    }
-
-    if (
-      (routing.shouldBlendWithWebSearch || routing.shouldUseKnowledgeBaseOnly) &&
-      knowledgeBaseCitations.length > 0 &&
-      webCitations.length > 0
-    ) {
-      return {
-        retrievalMode: "hybrid",
-        routingReason: routing.reason,
-        citations: [...knowledgeBaseCitations, ...webCitations],
-        knowledgeBaseCitations,
-        webCitations,
-      }
-    }
-
-    if (webCitations.length > 0) {
-      return {
-        retrievalMode: "search",
-        routingReason: routing.reason,
-        citations: webCitations,
-        knowledgeBaseCitations,
-        webCitations,
-      }
-    }
-
-    if (routing.shouldUseKnowledgeBaseOnly && knowledgeBaseCitations.length > 0) {
-      return {
-        retrievalMode: "knowledge_base",
-        routingReason:
-          needsWebSearch && !searchAvailable
-            ? `${routing.reason}_search_unavailable_fallback_to_knowledge_base`
-            : routing.reason,
-        citations: knowledgeBaseCitations,
-        knowledgeBaseCitations,
-        webCitations,
-      }
-    }
-
-    return {
-      retrievalMode: "none",
-      routingReason:
-        needsWebSearch && !searchAvailable
-          ? `${routing.reason}_search_unavailable`
-          : routing.reason,
-      citations: [],
-      knowledgeBaseCitations: [],
-      webCitations: [],
-    }
+    return this.resolveRetrievalResult({
+      routing,
+      needsWebSearch,
+      searchAvailable,
+      knowledgeBaseCitations,
+      webCitations,
+    })
   }
 
   private isSearchAvailable() {
@@ -194,5 +140,113 @@ export class HybridRetrieverService {
     )
 
     return citations.filter(citation => citation.score >= minScore)
+  }
+
+  private resolveRetrievalResult(
+    context: RetrievalResolutionContext,
+  ): HybridRetrievalResult {
+    const {
+      routing,
+      needsWebSearch,
+      searchAvailable,
+      knowledgeBaseCitations,
+      webCitations,
+    } = context
+
+    if (routing.shouldUseKnowledgeBaseOnly && webCitations.length === 0) {
+      return this.buildResult(
+        "knowledge_base",
+        routing.reason,
+        knowledgeBaseCitations,
+        knowledgeBaseCitations,
+        webCitations,
+      )
+    }
+
+    if (this.shouldReturnHybrid(context)) {
+      return this.buildResult(
+        "hybrid",
+        routing.reason,
+        [...knowledgeBaseCitations, ...webCitations],
+        knowledgeBaseCitations,
+        webCitations,
+      )
+    }
+
+    if (webCitations.length > 0) {
+      return this.buildResult(
+        "search",
+        routing.reason,
+        webCitations,
+        knowledgeBaseCitations,
+        webCitations,
+      )
+    }
+
+    if (routing.shouldUseKnowledgeBaseOnly && knowledgeBaseCitations.length > 0) {
+      return this.buildResult(
+        "knowledge_base",
+        this.resolveFallbackReason(
+          routing.reason,
+          needsWebSearch,
+          searchAvailable,
+          "_search_unavailable_fallback_to_knowledge_base",
+        ),
+        knowledgeBaseCitations,
+        knowledgeBaseCitations,
+        webCitations,
+      )
+    }
+
+    return this.buildResult(
+      "none",
+      this.resolveFallbackReason(
+        routing.reason,
+        needsWebSearch,
+        searchAvailable,
+        "_search_unavailable",
+      ),
+      [],
+      [],
+      webCitations,
+    )
+  }
+
+  private shouldReturnHybrid(context: RetrievalResolutionContext) {
+    return (
+      (context.routing.shouldBlendWithWebSearch ||
+        context.routing.shouldUseKnowledgeBaseOnly) &&
+      context.knowledgeBaseCitations.length > 0 &&
+      context.webCitations.length > 0
+    )
+  }
+
+  private resolveFallbackReason(
+    routingReason: string,
+    needsWebSearch: boolean,
+    searchAvailable: boolean,
+    unavailableSuffix: string,
+  ) {
+    if (needsWebSearch && !searchAvailable) {
+      return `${routingReason}${unavailableSuffix}`
+    }
+
+    return routingReason
+  }
+
+  private buildResult(
+    retrievalMode: RagRetrievalMode,
+    routingReason: string,
+    citations: RagCitation[],
+    knowledgeBaseCitations: RagCitation[],
+    webCitations: RagCitation[],
+  ): HybridRetrievalResult {
+    return {
+      retrievalMode,
+      routingReason,
+      citations,
+      knowledgeBaseCitations,
+      webCitations,
+    }
   }
 }

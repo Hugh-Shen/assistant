@@ -4,15 +4,7 @@ import type {
   WebSearchDocument,
   WebSearchRepository,
 } from "../ports/web-search.repository"
-
-interface TavilySearchResponse {
-  results?: Array<{
-    title?: string
-    url?: string
-    content?: string
-    score?: number
-  }>
-}
+import type { TavilySearchResponse } from "../types/tavily-search-response"
 
 @Injectable()
 export class TavilySearchRepository implements WebSearchRepository {
